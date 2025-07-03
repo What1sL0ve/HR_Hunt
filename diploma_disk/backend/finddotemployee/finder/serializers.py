@@ -217,6 +217,7 @@ class ExperienceNestedSerializer(serializers.ModelSerializer):
 class CandidateSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(read_only=True)
     match_score = serializers.SerializerMethodField(read_only=True)
+    digital_maturity_score = serializers.FloatField(read_only=True)
     skills = serializers.SerializerMethodField(read_only=True)
     resumes = serializers.SerializerMethodField(read_only=True)
     education = EducationNestedSerializer(source='education_set', many=True, read_only=True)
@@ -224,7 +225,7 @@ class CandidateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Candidate
-        fields = ['id', 'full_name', 'age', 'avatar', 'about', 'match_score', 'skills', 'education', 'experience', 'resumes']
+        fields = ['id', 'full_name', 'age', 'avatar', 'about', 'match_score', 'digital_maturity_score', 'skills', 'education', 'experience', 'resumes']
 
     def get_match_score(self, candidate):
         vacancy = self.context.get('vacancy')

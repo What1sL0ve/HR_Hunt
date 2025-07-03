@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ObjectDoesNotExist
 
 
 class Company(models.Model):
@@ -14,6 +15,8 @@ class Company(models.Model):
 
     def __str__(self):
         return self.name
+
+
 
 
 class Candidate(models.Model):
@@ -29,6 +32,19 @@ class Candidate(models.Model):
 
     def __str__(self):
         return self.full_name
+
+    @property
+    def digital_maturity_score(self):
+        """
+        Возвращает цифровую зрелость кандидата (1–4) на основе активного резюме.
+        Учитывает контекст вакансии (_vacancy_context) для дополнительных навыков.
+        """
+        try:
+            resume = self.resumes.get(is_active=True)
+            resume._vacancy_context = getattr(self, '_vacancy_context', None)
+            return resume.digital_maturity_score
+        except ObjectDoesNotExist:
+            return 1  # Минимальный уровень при отсутствии резюме
 
 
 class Education(models.Model):
@@ -54,9 +70,10 @@ class Experience(models.Model):
         verbose_name_plural = _("Опыты работы")
 
 
+
 class Resume(models.Model):
     name = models.CharField(max_length=100, default='Какое-то резюме без названия')
-    candidate = models.ForeignKey(Candidate, on_delete=models.CASCADE, related_name='resumes', verbose_name=_("Кандидат"))
+    candidate = models.ForeignKey('Candidate', on_delete=models.CASCADE, related_name='resumes', verbose_name=_("Кандидат"))
     is_active = models.BooleanField(default=True, verbose_name=_("Активно"))
 
     class Meta:
@@ -68,11 +85,40 @@ class Resume(models.Model):
 
     @property
     def digital_maturity_score(self):
-        skills = self.candidate.skills.all()
+        """
+        Рассчитывает цифровую зрелость кандидата (1–4) на основе весов и уровня навыков.
+        Учитывает бонус за дополнительные навыки, если передан контекст вакансии.
+        """
+        skills = self.candidate.skills.select_related('skill').all()
         if not skills.exists():
-            return 0
-        weights = [s.skill.weight for s in skills]
-        return round(sum(weights) / len(weights), 2)
+            return 1  # Минимальный уровень при отсутствии навыков
+
+        # Базовый расчет: среднее взвешенное значение (вес навыка * уровень владения)
+        weighted_sum = sum(s.skill.weight * (s.rank / 5.0) for s in skills)
+        skill_count = len(skills)
+        base_score = weighted_sum / skill_count if skill_count > 0 else 0
+
+        # Учет дополнительных навыков, если есть контекст вакансии
+        vacancy = getattr(self, '_vacancy_context', None)
+        if vacancy:
+            vacancy_skill_ids = {vs.skill.id for vs in vacancy.skills.select_related('skill')}
+            extra_skills = [s for s in skills if s.skill.id not in vacancy_skill_ids]
+            if extra_skills:
+                extra_bonus = sum(s.skill.weight * (s.rank / 5.0) for s in extra_skills)
+                extra_bonus = min(extra_bonus / max(len(extra_skills), 1), 0.2)  # Ограничение бонуса
+                base_score = min(base_score + extra_bonus, 1.0)  # Не выше 1.0
+
+        # Преобразование в уровень 1–4
+        if base_score <= 0.25:
+            level = 1
+        elif base_score <= 0.5:
+            level = 2
+        elif base_score <= 0.75:
+            level = 3
+        else:
+            level = 4
+
+        return level
 
 
 class Vacancy(models.Model):
